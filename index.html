@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Study TimeTable</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <div>
+          <p class="app__eyebrow">Study Planner</p>
+          <h1>Create your weekly timetable</h1>
+          <p class="app__subheading">
+            Organize study blocks, keep focus, and stay consistent all week.
+          </p>
+        </div>
+        <div class="app__status">
+          <label class="user-switcher" for="username-input">
+            Username and password
+            <div class="user-switcher__controls">
+              <input
+                id="username-input"
+                type="text"
+                placeholder="Enter username"
+                autocomplete="off"
+              />
+              <input
+                id="password-input"
+                type="password"
+                placeholder="Password"
+                autocomplete="off"
+              />
+              <button id="load-user-button" class="ghost" type="button">
+                Load user
+              </button>
+            </div>
+          </label>
+          <p id="active-user-label" class="active-user">User: guest</p>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Timetable sections">
+        <button
+          id="tab-timetable"
+          class="tab is-active"
+          type="button"
+          data-tab="timetable"
+          aria-selected="true"
+        >
+          Timetable
+        </button>
+        <button
+          id="tab-add"
+          class="tab"
+          type="button"
+          data-tab="add"
+          aria-selected="false"
+        >
+          Add Study Session
+        </button>
+      </nav>
+
+      <section id="panel-timetable" class="card tab-panel">
+        <div class="card__header">
+          <h2>Your timetable</h2>
+          <div class="timetable-actions">
+            <span id="save-indicator">All changes saved</span>
+            <button id="save-button" class="primary">Save timetable</button>
+            <button id="clear-button" class="ghost">Clear all</button>
+          </div>
+        </div>
+        <div class="reminder-bar">
+          <div class="reminder-bar__controls">
+            <button id="reminder-toggle" class="ghost" type="button">
+              Enable reminders
+            </button>
+            <button id="stop-alert-button" class="alert" type="button" disabled>
+              Stop active alert
+            </button>
+          </div>
+          <div class="reminder-bar__meta">
+            <p id="reminder-status" class="reminder__status">Reminders off</p>
+            <p id="next-reminder" class="reminder__next">No upcoming reminders</p>
+          </div>
+        </div>
+        <div class="table" role="table">
+          <div class="table__row table__header" role="row">
+            <span>Day</span>
+            <span>Subject</span>
+            <span>Time</span>
+            <span>Notes</span>
+            <span></span>
+          </div>
+          <div id="entries" class="table__body" role="rowgroup"></div>
+        </div>
+        <p id="empty-state" class="empty">No sessions yet. Add one in Add Study Session.</p>
+      </section>
+
+      <section id="panel-add" class="card tab-panel" hidden>
+        <h2>Add a study session</h2>
+        <form id="entry-form" class="form">
+          <label>
+            Day
+            <select name="day" required>
+              <option value="Monday">Monday</option>
+              <option value="Tuesday">Tuesday</option>
+              <option value="Wednesday">Wednesday</option>
+              <option value="Thursday">Thursday</option>
+              <option value="Friday">Friday</option>
+              <option value="Saturday">Saturday</option>
+              <option value="Sunday">Sunday</option>
+            </select>
+          </label>
+          <label>
+            Subject
+            <input type="text" name="subject" placeholder="Calculus" required />
+          </label>
+          <label>
+            Start time
+            <input type="time" name="start" required />
+          </label>
+          <label>
+            End time
+            <input type="time" name="end" required />
+          </label>
+          <label class="full">
+            Notes
+            <input type="text" name="notes" placeholder="Topics or goals" />
+          </label>
+          <button type="submit" class="primary">Add session</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
