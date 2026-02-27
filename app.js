@@ -10,16 +10,23 @@ const reminderStatus = document.getElementById("reminder-status");
 const nextReminder = document.getElementById("next-reminder");
 const usernameInput = document.getElementById("username-input");
 const passwordInput = document.getElementById("password-input");
-const loadUserButton = document.getElementById("load-user-button");
+const signInButton = document.getElementById("sign-in-button");
+const signOutButton = document.getElementById("sign-out-button");
 const activeUserLabel = document.getElementById("active-user-label");
 const tabButtons = document.querySelectorAll(".tab");
 const addPanel = document.getElementById("panel-add");
 const timetablePanel = document.getElementById("panel-timetable");
 
-const CURRENT_SESSION_KEY = "timetableCurrentSession";
-const DEFAULT_USERNAME = "guest";
-const DEFAULT_PASSWORD = "guest";
-const USER_ENTRIES_SUFFIX = "entries";
+const SUPABASE_URL =
+  typeof window.__SUPABASE_URL__ === "string"
+    ? window.__SUPABASE_URL__.trim()
+    : "";
+const SUPABASE_ANON_KEY =
+  typeof window.__SUPABASE_ANON_KEY__ === "string"
+    ? window.__SUPABASE_ANON_KEY__.trim()
+    : "";
+
+const TIMETABLE_NAME = "default";
 const USER_REMINDER_ENABLED_SUFFIX = "remindersEnabled";
 const USER_REMINDER_FIRED_SUFFIX = "reminderFiredEvents";
 const REMINDER_GRACE_MINUTES = 2;
@@ -39,92 +46,20 @@ const DAY_NAME_TO_INDEX = Object.fromEntries(
 let entries = [];
 let isSaved = true;
 let remindersEnabled = false;
-let activeUsername = DEFAULT_USERNAME;
-let activePasswordHash = "";
+let timetableRowId = null;
 let reminderIntervalId = null;
 let activeAlertIntervalId = null;
 let firedReminderEvents = new Set();
 let audioContext = null;
+let supabaseClient = null;
+let activeUser = null;
+let authActionPending = false;
 
-const normalizeUsername = (value) => {
-  const cleaned =
-    typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
-  return cleaned || DEFAULT_USERNAME;
-};
+const normalizeEmail = (value) =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
 
 const normalizePassword = (value) =>
   typeof value === "string" ? value.trim() : "";
-
-const hashCredential = (username, password) => {
-  const source = `${normalizeUsername(username).toLowerCase()}::${password}`;
-  let hash = 2166136261;
-
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
-    hash +=
-      (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
-  }
-
-  return (hash >>> 0).toString(36);
-};
-
-const makeDefaultPasswordHash = () =>
-  hashCredential(DEFAULT_USERNAME, DEFAULT_PASSWORD);
-
-const getUserStorageKey = (username, passwordHash, suffix) => {
-  const userKey = encodeURIComponent(normalizeUsername(username).toLowerCase());
-  return `timetable:${userKey}:${passwordHash}:${suffix}`;
-};
-
-const getCurrentUserStorageKey = (suffix) =>
-  getUserStorageKey(activeUsername, activePasswordHash, suffix);
-
-const persistCurrentSession = () => {
-  localStorage.setItem(
-    CURRENT_SESSION_KEY,
-    JSON.stringify({
-      username: activeUsername,
-      passwordHash: activePasswordHash
-    })
-  );
-};
-
-const loadCurrentSession = () => {
-  const fallback = {
-    username: DEFAULT_USERNAME,
-    passwordHash: makeDefaultPasswordHash()
-  };
-
-  try {
-    const raw = localStorage.getItem(CURRENT_SESSION_KEY);
-    if (!raw) {
-      activeUsername = fallback.username;
-      activePasswordHash = fallback.passwordHash;
-      persistCurrentSession();
-      return;
-    }
-
-    const parsed = JSON.parse(raw);
-    if (
-      !parsed ||
-      typeof parsed.username !== "string" ||
-      typeof parsed.passwordHash !== "string" ||
-      !parsed.passwordHash
-    ) {
-      activeUsername = fallback.username;
-      activePasswordHash = fallback.passwordHash;
-      persistCurrentSession();
-      return;
-    }
-
-    activeUsername = normalizeUsername(parsed.username);
-    activePasswordHash = parsed.passwordHash;
-  } catch (_error) {
-    activeUsername = fallback.username;
-    activePasswordHash = fallback.passwordHash;
-    persistCurrentSession();
-  }
-};
 
 const updateSaveIndicator = (status) => {
   saveIndicator.textContent = status;
@@ -135,13 +70,30 @@ const updateReminderStatus = (status) => {
 };
 
 const updateActiveUserLabel = () => {
-  activeUserLabel.textContent = `User: ${activeUsername}`;
+  if (!activeUser) {
+    activeUserLabel.textContent = "User: signed out";
+    return;
+  }
+
+  activeUserLabel.textContent = `User: ${activeUser.email || activeUser.id}`;
 };
 
 const updateReminderToggleLabel = () => {
   reminderToggle.textContent = remindersEnabled
     ? "Disable reminders"
     : "Enable reminders";
+};
+
+const updateAuthButtons = () => {
+  const authAvailable = Boolean(supabaseClient);
+  signInButton.disabled = !authAvailable || authActionPending;
+  signOutButton.disabled =
+    !authAvailable || authActionPending || !activeUser;
+};
+
+const setAuthActionPending = (pending) => {
+  authActionPending = pending;
+  updateAuthButtons();
 };
 
 const setActiveTab = (tabName) => {
@@ -187,6 +139,60 @@ const generateId = () => {
     return window.crypto.randomUUID();
   }
   return `entry-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+};
+
+const normalizeEntry = (entry) => {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const day = typeof entry.day === "string" ? entry.day.trim() : "";
+  const subject =
+    typeof entry.subject === "string" ? entry.subject.trim() : "";
+  const start = typeof entry.start === "string" ? entry.start.trim() : "";
+  const end = typeof entry.end === "string" ? entry.end.trim() : "";
+  const notes = typeof entry.notes === "string" ? entry.notes.trim() : "";
+
+  if (
+    !DAY_NAME_TO_INDEX.hasOwnProperty(day) ||
+    !subject ||
+    timeToMinutes(start) === null ||
+    timeToMinutes(end) === null
+  ) {
+    return null;
+  }
+
+  return {
+    id:
+      typeof entry.id === "string" && entry.id.trim()
+        ? entry.id.trim()
+        : generateId(),
+    day,
+    subject,
+    start,
+    end,
+    notes
+  };
+};
+
+const normalizeEntries = (rawData) => {
+  const rawEntries = Array.isArray(rawData)
+    ? rawData
+    : rawData && Array.isArray(rawData.entries)
+      ? rawData.entries
+      : [];
+
+  return rawEntries
+    .map((entry) => normalizeEntry(entry))
+    .filter((entry) => entry !== null);
+};
+
+const getReminderStorageKey = (suffix) => {
+  if (!activeUser) {
+    return null;
+  }
+
+  return `timetable:${activeUser.id}:${suffix}`;
 };
 
 const findNextReminderEvent = () => {
@@ -265,10 +271,11 @@ const renderEntries = () => {
   entries
     .slice()
     .sort((a, b) => {
-      if (a.day === b.day) {
-        return a.start.localeCompare(b.start);
+      const dayDelta = DAY_NAME_TO_INDEX[a.day] - DAY_NAME_TO_INDEX[b.day];
+      if (dayDelta !== 0) {
+        return dayDelta;
       }
-      return a.day.localeCompare(b.day);
+      return a.start.localeCompare(b.start);
     })
     .forEach((entry) => {
       const row = document.createElement("div");
@@ -282,6 +289,11 @@ const renderEntries = () => {
       `;
 
       row.querySelector("button").addEventListener("click", () => {
+        if (!activeUser) {
+          updateSaveIndicator("Sign in to edit timetable");
+          return;
+        }
+
         entries = entries.filter((item) => item.id !== entry.id);
         isSaved = false;
         updateSaveIndicator("Not saved");
@@ -306,24 +318,36 @@ const pruneFiredReminderEvents = () => {
 
 const persistFiredReminderEvents = () => {
   pruneFiredReminderEvents();
-  localStorage.setItem(
-    getCurrentUserStorageKey(USER_REMINDER_FIRED_SUFFIX),
-    JSON.stringify([...firedReminderEvents])
-  );
+
+  const storageKey = getReminderStorageKey(USER_REMINDER_FIRED_SUFFIX);
+  if (!storageKey) {
+    return;
+  }
+
+  localStorage.setItem(storageKey, JSON.stringify([...firedReminderEvents]));
 };
 
 const loadReminderState = () => {
-  remindersEnabled =
-    localStorage.getItem(getCurrentUserStorageKey(USER_REMINDER_ENABLED_SUFFIX)) ===
-    "true";
+  if (!activeUser) {
+    remindersEnabled = false;
+    firedReminderEvents = new Set();
+    updateReminderToggleLabel();
+    return;
+  }
+
+  const remindersEnabledKey = getReminderStorageKey(
+    USER_REMINDER_ENABLED_SUFFIX
+  );
+  remindersEnabled = localStorage.getItem(remindersEnabledKey) === "true";
 
   try {
-    const raw = localStorage.getItem(
-      getCurrentUserStorageKey(USER_REMINDER_FIRED_SUFFIX)
-    );
+    const firedEventsKey = getReminderStorageKey(USER_REMINDER_FIRED_SUFFIX);
+    const raw = localStorage.getItem(firedEventsKey);
     const parsed = raw ? JSON.parse(raw) : [];
     firedReminderEvents = new Set(
-      Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : []
+      Array.isArray(parsed)
+        ? parsed.filter((item) => typeof item === "string")
+        : []
     );
   } catch (_error) {
     firedReminderEvents = new Set();
@@ -331,54 +355,6 @@ const loadReminderState = () => {
 
   persistFiredReminderEvents();
   updateReminderToggleLabel();
-};
-
-const loadEntries = () => {
-  const raw = localStorage.getItem(getCurrentUserStorageKey(USER_ENTRIES_SUFFIX));
-
-  if (!raw) {
-    entries = [];
-    isSaved = true;
-    updateSaveIndicator("All changes saved");
-    renderEntries();
-    return;
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    entries = Array.isArray(parsed) ? parsed : [];
-  } catch (_error) {
-    entries = [];
-    localStorage.removeItem(getCurrentUserStorageKey(USER_ENTRIES_SUFFIX));
-    updateSaveIndicator("Storage data was reset");
-    renderEntries();
-    return;
-  }
-
-  isSaved = true;
-  updateSaveIndicator("All changes saved");
-  renderEntries();
-};
-
-const saveEntries = () => {
-  saveButton.disabled = true;
-  updateSaveIndicator("Saving...");
-
-  try {
-    localStorage.setItem(
-      getCurrentUserStorageKey(USER_ENTRIES_SUFFIX),
-      JSON.stringify(entries)
-    );
-  } catch (_error) {
-    updateSaveIndicator("Save failed");
-    saveButton.disabled = false;
-    return false;
-  }
-
-  isSaved = true;
-  updateSaveIndicator("All changes saved");
-  saveButton.disabled = false;
-  return true;
 };
 
 const ensureAudioContext = async () => {
@@ -559,10 +535,11 @@ const stopReminderLoop = () => {
 
 const setRemindersEnabled = (enabled) => {
   remindersEnabled = enabled;
-  localStorage.setItem(
-    getCurrentUserStorageKey(USER_REMINDER_ENABLED_SUFFIX),
-    String(enabled)
-  );
+  const storageKey = getReminderStorageKey(USER_REMINDER_ENABLED_SUFFIX);
+  if (storageKey) {
+    localStorage.setItem(storageKey, String(enabled));
+  }
+
   updateReminderToggleLabel();
   updateNextReminderLabel();
 
@@ -578,11 +555,138 @@ const setRemindersEnabled = (enabled) => {
   stopActiveReminderAlert("Reminders off");
 };
 
-const loadUserData = () => {
+const loadEntriesFromCloud = async () => {
+  if (!activeUser || !supabaseClient) {
+    entries = [];
+    isSaved = true;
+    timetableRowId = null;
+    renderEntries();
+    return;
+  }
+
+  updateSaveIndicator("Loading timetable...");
+  const { data, error } = await supabaseClient
+    .from("timetables")
+    .select("id, data_json, updated_at")
+    .eq("user_id", activeUser.id)
+    .eq("name", TIMETABLE_NAME)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    entries = [];
+    isSaved = true;
+    timetableRowId = null;
+    updateSaveIndicator("Failed to load timetable");
+    renderEntries();
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    entries = [];
+    isSaved = true;
+    timetableRowId = null;
+    updateSaveIndicator("No saved timetable yet");
+    renderEntries();
+    return;
+  }
+
+  timetableRowId = data[0].id;
+  entries = normalizeEntries(data[0].data_json);
+  isSaved = true;
+  updateSaveIndicator("All changes saved");
+  renderEntries();
+};
+
+const saveEntries = async () => {
+  if (!activeUser || !supabaseClient) {
+    updateSaveIndicator("Sign in to save timetable");
+    return false;
+  }
+
+  saveButton.disabled = true;
+  updateSaveIndicator("Saving...");
+
+  const payload = entries.map((entry) => ({
+    id: entry.id,
+    day: entry.day,
+    subject: entry.subject,
+    start: entry.start,
+    end: entry.end,
+    notes: entry.notes
+  }));
+
+  const updatePayload = {
+    data_json: payload,
+    updated_at: new Date().toISOString()
+  };
+
+  const { data: updatedRows, error: updateError } = await supabaseClient
+    .from("timetables")
+    .update(updatePayload)
+    .eq("user_id", activeUser.id)
+    .eq("name", TIMETABLE_NAME)
+    .select("id");
+
+  if (updateError) {
+    updateSaveIndicator("Save failed");
+    saveButton.disabled = false;
+    return false;
+  }
+
+  if (updatedRows && updatedRows.length > 0) {
+    timetableRowId = updatedRows[0].id;
+    isSaved = true;
+    updateSaveIndicator("All changes saved");
+    saveButton.disabled = false;
+    return true;
+  }
+
+  const { data: insertedRow, error: insertError } = await supabaseClient
+    .from("timetables")
+    .insert({
+      user_id: activeUser.id,
+      name: TIMETABLE_NAME,
+      data_json: payload
+    })
+    .select("id")
+    .single();
+
+  if (insertError) {
+    updateSaveIndicator("Save failed");
+    saveButton.disabled = false;
+    return false;
+  }
+
+  timetableRowId = insertedRow.id;
+  isSaved = true;
+  updateSaveIndicator("All changes saved");
+  saveButton.disabled = false;
+  return true;
+};
+
+const applySignedOutState = (statusMessage = "Sign in to load your timetable") => {
+  stopReminderLoop();
+  stopActiveReminderAlert("Reminders off");
+  remindersEnabled = false;
+  updateReminderToggleLabel();
+  firedReminderEvents = new Set();
+  timetableRowId = null;
+  activeUser = null;
+  entries = [];
+  isSaved = true;
+  renderEntries();
+  updateReminderStatus("Reminders off");
+  updateSaveIndicator(statusMessage);
+  updateActiveUserLabel();
+  updateAuthButtons();
+};
+
+const loadUserData = async () => {
   stopReminderLoop();
   stopActiveReminderAlert("Reminders off");
   loadReminderState();
-  loadEntries();
+  await loadEntriesFromCloud();
 
   if (remindersEnabled) {
     updateReminderStatus("Reminders on");
@@ -592,46 +696,126 @@ const loadUserData = () => {
   }
 };
 
-const switchUser = () => {
-  const newUsername = normalizeUsername(usernameInput.value);
-  const newPassword = normalizePassword(passwordInput.value);
-
-  if (!newPassword) {
-    updateSaveIndicator("Enter password to load user");
-    passwordInput.focus();
+const refreshSessionState = async (signedOutMessage) => {
+  if (!supabaseClient) {
+    applySignedOutState("Set Supabase URL and anon key in index.html");
     return;
   }
 
-  if (!isSaved) {
-    const ok = saveEntries();
-    if (!ok) {
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) {
+    applySignedOutState("Authentication error");
+    return;
+  }
+
+  const sessionUser = data.session?.user ?? null;
+  if (!sessionUser) {
+    applySignedOutState(signedOutMessage || "Sign in to load your timetable");
+    return;
+  }
+
+  activeUser = sessionUser;
+  timetableRowId = null;
+  usernameInput.value = sessionUser.email || "";
+  passwordInput.value = "";
+  updateActiveUserLabel();
+  updateAuthButtons();
+  await loadUserData();
+};
+
+const readCredentials = () => {
+  const email = normalizeEmail(usernameInput.value);
+  const password = normalizePassword(passwordInput.value);
+  return { email, password };
+};
+
+const signIn = async () => {
+  if (!supabaseClient) {
+    updateSaveIndicator("Set Supabase URL and anon key in index.html");
+    return;
+  }
+
+  const { email, password } = readCredentials();
+  if (!email || !password) {
+    updateSaveIndicator("Enter email and password");
+    return;
+  }
+
+  if (activeUser && !isSaved) {
+    const saved = await saveEntries();
+    if (!saved) {
       return;
     }
   }
 
-  activeUsername = newUsername;
-  activePasswordHash = hashCredential(newUsername, newPassword);
-  persistCurrentSession();
-  usernameInput.value = activeUsername;
-  passwordInput.value = "";
-  updateActiveUserLabel();
-  loadUserData();
+  setAuthActionPending(true);
+  const { error } = await supabaseClient.auth.signInWithPassword({
+    email,
+    password
+  });
+  setAuthActionPending(false);
+
+  if (error) {
+    updateSaveIndicator(`Sign in failed: ${error.message}`);
+    return;
+  }
+
+  await refreshSessionState();
+  updateSaveIndicator("Signed in");
+};
+
+const signOut = async () => {
+  if (!activeUser || !supabaseClient) {
+    return;
+  }
+
+  if (!isSaved) {
+    const saved = await saveEntries();
+    if (!saved) {
+      return;
+    }
+  }
+
+  setAuthActionPending(true);
+  const { error } = await supabaseClient.auth.signOut();
+  setAuthActionPending(false);
+
+  if (error) {
+    updateSaveIndicator(`Sign out failed: ${error.message}`);
+    return;
+  }
+
+  await refreshSessionState("Signed out");
 };
 
 entryForm.addEventListener("submit", (event) => {
   event.preventDefault();
+
+  if (!activeUser) {
+    updateSaveIndicator("Sign in to edit timetable");
+    return;
+  }
+
   const formData = new FormData(entryForm);
+  const subject = (formData.get("subject") || "").toString().trim();
+  const notes = (formData.get("notes") || "").toString().trim();
 
   const entry = {
     id: generateId(),
-    day: formData.get("day"),
-    subject: formData.get("subject").trim(),
-    start: formData.get("start"),
-    end: formData.get("end"),
-    notes: formData.get("notes").trim()
+    day: (formData.get("day") || "").toString(),
+    subject,
+    start: (formData.get("start") || "").toString(),
+    end: (formData.get("end") || "").toString(),
+    notes
   };
 
-  entries.push(entry);
+  const normalized = normalizeEntry(entry);
+  if (!normalized) {
+    updateSaveIndicator("Invalid study session details");
+    return;
+  }
+
+  entries.push(normalized);
   isSaved = false;
   updateSaveIndicator("Not saved");
   renderEntries();
@@ -639,31 +823,40 @@ entryForm.addEventListener("submit", (event) => {
 });
 
 saveButton.addEventListener("click", () => {
-  saveEntries();
+  void saveEntries();
 });
 
 clearButton.addEventListener("click", () => {
+  if (!activeUser) {
+    updateSaveIndicator("Sign in to edit timetable");
+    return;
+  }
+
   entries = [];
   isSaved = false;
   updateSaveIndicator("Not saved");
   renderEntries();
 });
 
-loadUserButton.addEventListener("click", () => {
-  switchUser();
+signInButton.addEventListener("click", () => {
+  void signIn();
+});
+
+signOutButton.addEventListener("click", () => {
+  void signOut();
 });
 
 usernameInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    switchUser();
+    void signIn();
   }
 });
 
 passwordInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    switchUser();
+    void signIn();
   }
 });
 
@@ -672,6 +865,11 @@ stopAlertButton.addEventListener("click", () => {
 });
 
 reminderToggle.addEventListener("click", async () => {
+  if (!activeUser) {
+    updateSaveIndicator("Sign in to use reminders");
+    return;
+  }
+
   if (!remindersEnabled) {
     await ensureAudioContext().catch(() => {});
     await requestNotificationAccess().catch(() => {});
@@ -701,9 +899,25 @@ window.addEventListener("beforeunload", (event) => {
   }
 });
 
-loadCurrentSession();
-usernameInput.value = activeUsername;
-passwordInput.value = "";
-updateActiveUserLabel();
-setActiveTab("timetable");
-loadUserData();
+const initializeApp = async () => {
+  setActiveTab("timetable");
+  updateReminderToggleLabel();
+  updateActiveUserLabel();
+  updateAuthButtons();
+
+  if (
+    !SUPABASE_URL ||
+    !SUPABASE_ANON_KEY ||
+    !window.supabase ||
+    typeof window.supabase.createClient !== "function"
+  ) {
+    applySignedOutState("Set Supabase URL and anon key in index.html");
+    return;
+  }
+
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  updateAuthButtons();
+  await refreshSessionState();
+};
+
+void initializeApp();

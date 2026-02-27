@@ -18,26 +18,29 @@
         </div>
         <div class="app__status">
           <label class="user-switcher" for="username-input">
-            Username and password
+            Email and password
             <div class="user-switcher__controls">
               <input
                 id="username-input"
-                type="text"
-                placeholder="Enter username"
-                autocomplete="off"
+                type="email"
+                placeholder="Enter email"
+                autocomplete="email"
               />
               <input
                 id="password-input"
                 type="password"
                 placeholder="Password"
-                autocomplete="off"
+                autocomplete="current-password"
               />
-              <button id="load-user-button" class="ghost" type="button">
-                Load user
+              <button id="sign-in-button" class="ghost" type="button">
+                Sign in
+              </button>
+              <button id="sign-out-button" class="ghost" type="button">
+                Sign out
               </button>
             </div>
           </label>
-          <p id="active-user-label" class="active-user">User: guest</p>
+          <p id="active-user-label" class="active-user">User: signed out</p>
         </div>
       </header>
 
@@ -134,6 +137,11 @@
       </section>
     </main>
 
+    <script>
+      window.__SUPABASE_URL__ = "https://ydxooyzddlkwuklswgfm.supabase.co";
+      window.__SUPABASE_ANON_KEY__ = "sb_publishable_ZrpzUoc_Ur5JcFRPrrxr6g_64s3Zvb4";
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="app.js"></script>
   </body>
 </html>
