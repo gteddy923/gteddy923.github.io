@@ -13,6 +13,7 @@ const passwordInput = document.getElementById("password-input");
 const signInButton = document.getElementById("sign-in-button");
 const signOutButton = document.getElementById("sign-out-button");
 const activeUserLabel = document.getElementById("active-user-label");
+const authFeedback = document.getElementById("auth-feedback");
 const tabButtons = document.querySelectorAll(".tab");
 const addPanel = document.getElementById("panel-add");
 const timetablePanel = document.getElementById("panel-timetable");
@@ -61,12 +62,32 @@ const normalizeEmail = (value) =>
 const normalizePassword = (value) =>
   typeof value === "string" ? value.trim() : "";
 
+const getErrorMessage = (error, fallback = "Unexpected error") => {
+  if (!error) {
+    return fallback;
+  }
+
+  if (typeof error.message === "string" && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+
+  return fallback;
+};
+
 const updateSaveIndicator = (status) => {
   saveIndicator.textContent = status;
 };
 
 const updateReminderStatus = (status) => {
   reminderStatus.textContent = status;
+};
+
+const updateAuthFeedback = (status) => {
+  authFeedback.textContent = status;
 };
 
 const updateActiveUserLabel = () => {
@@ -565,37 +586,46 @@ const loadEntriesFromCloud = async () => {
   }
 
   updateSaveIndicator("Loading timetable...");
-  const { data, error } = await supabaseClient
-    .from("timetables")
-    .select("id, data_json, updated_at")
-    .eq("user_id", activeUser.id)
-    .eq("name", TIMETABLE_NAME)
-    .order("updated_at", { ascending: false })
-    .limit(1);
 
-  if (error) {
+  try {
+    const { data, error } = await supabaseClient
+      .from("timetables")
+      .select("id, data_json, updated_at")
+      .eq("user_id", activeUser.id)
+      .eq("name", TIMETABLE_NAME)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      entries = [];
+      isSaved = true;
+      timetableRowId = null;
+      updateSaveIndicator("Failed to load timetable");
+      renderEntries();
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      entries = [];
+      isSaved = true;
+      timetableRowId = null;
+      updateSaveIndicator("No saved timetable yet");
+      renderEntries();
+      return;
+    }
+
+    timetableRowId = data[0].id;
+    entries = normalizeEntries(data[0].data_json);
+    isSaved = true;
+    updateSaveIndicator("All changes saved");
+    renderEntries();
+  } catch (_error) {
     entries = [];
     isSaved = true;
     timetableRowId = null;
     updateSaveIndicator("Failed to load timetable");
     renderEntries();
-    return;
   }
-
-  if (!data || data.length === 0) {
-    entries = [];
-    isSaved = true;
-    timetableRowId = null;
-    updateSaveIndicator("No saved timetable yet");
-    renderEntries();
-    return;
-  }
-
-  timetableRowId = data[0].id;
-  entries = normalizeEntries(data[0].data_json);
-  isSaved = true;
-  updateSaveIndicator("All changes saved");
-  renderEntries();
 };
 
 const saveEntries = async () => {
@@ -621,48 +651,51 @@ const saveEntries = async () => {
     updated_at: new Date().toISOString()
   };
 
-  const { data: updatedRows, error: updateError } = await supabaseClient
-    .from("timetables")
-    .update(updatePayload)
-    .eq("user_id", activeUser.id)
-    .eq("name", TIMETABLE_NAME)
-    .select("id");
+  try {
+    const { data: updatedRows, error: updateError } = await supabaseClient
+      .from("timetables")
+      .update(updatePayload)
+      .eq("user_id", activeUser.id)
+      .eq("name", TIMETABLE_NAME)
+      .select("id");
 
-  if (updateError) {
-    updateSaveIndicator("Save failed");
-    saveButton.disabled = false;
-    return false;
-  }
+    if (updateError) {
+      updateSaveIndicator("Save failed");
+      return false;
+    }
 
-  if (updatedRows && updatedRows.length > 0) {
-    timetableRowId = updatedRows[0].id;
+    if (updatedRows && updatedRows.length > 0) {
+      timetableRowId = updatedRows[0].id;
+      isSaved = true;
+      updateSaveIndicator("All changes saved");
+      return true;
+    }
+
+    const { data: insertedRow, error: insertError } = await supabaseClient
+      .from("timetables")
+      .insert({
+        user_id: activeUser.id,
+        name: TIMETABLE_NAME,
+        data_json: payload
+      })
+      .select("id")
+      .single();
+
+    if (insertError) {
+      updateSaveIndicator("Save failed");
+      return false;
+    }
+
+    timetableRowId = insertedRow.id;
     isSaved = true;
     updateSaveIndicator("All changes saved");
-    saveButton.disabled = false;
     return true;
-  }
-
-  const { data: insertedRow, error: insertError } = await supabaseClient
-    .from("timetables")
-    .insert({
-      user_id: activeUser.id,
-      name: TIMETABLE_NAME,
-      data_json: payload
-    })
-    .select("id")
-    .single();
-
-  if (insertError) {
+  } catch (_error) {
     updateSaveIndicator("Save failed");
-    saveButton.disabled = false;
     return false;
+  } finally {
+    saveButton.disabled = false;
   }
-
-  timetableRowId = insertedRow.id;
-  isSaved = true;
-  updateSaveIndicator("All changes saved");
-  saveButton.disabled = false;
-  return true;
 };
 
 const applySignedOutState = (statusMessage = "Sign in to load your timetable") => {
@@ -678,6 +711,7 @@ const applySignedOutState = (statusMessage = "Sign in to load your timetable") =
   renderEntries();
   updateReminderStatus("Reminders off");
   updateSaveIndicator(statusMessage);
+  updateAuthFeedback(statusMessage);
   updateActiveUserLabel();
   updateAuthButtons();
 };
@@ -702,25 +736,30 @@ const refreshSessionState = async (signedOutMessage) => {
     return;
   }
 
-  const { data, error } = await supabaseClient.auth.getSession();
-  if (error) {
+  try {
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) {
+      applySignedOutState("Authentication error");
+      return;
+    }
+
+    const sessionUser = data.session?.user ?? null;
+    if (!sessionUser) {
+      applySignedOutState(signedOutMessage || "Sign in to load your timetable");
+      return;
+    }
+
+    activeUser = sessionUser;
+    timetableRowId = null;
+    usernameInput.value = sessionUser.email || "";
+    passwordInput.value = "";
+    updateActiveUserLabel();
+    updateAuthButtons();
+    updateAuthFeedback("Signed in");
+    await loadUserData();
+  } catch (_error) {
     applySignedOutState("Authentication error");
-    return;
   }
-
-  const sessionUser = data.session?.user ?? null;
-  if (!sessionUser) {
-    applySignedOutState(signedOutMessage || "Sign in to load your timetable");
-    return;
-  }
-
-  activeUser = sessionUser;
-  timetableRowId = null;
-  usernameInput.value = sessionUser.email || "";
-  passwordInput.value = "";
-  updateActiveUserLabel();
-  updateAuthButtons();
-  await loadUserData();
 };
 
 const readCredentials = () => {
@@ -732,12 +771,14 @@ const readCredentials = () => {
 const signIn = async () => {
   if (!supabaseClient) {
     updateSaveIndicator("Set Supabase URL and anon key in index.html");
+    updateAuthFeedback("Set Supabase URL and anon key in index.html");
     return;
   }
 
   const { email, password } = readCredentials();
   if (!email || !password) {
     updateSaveIndicator("Enter email and password");
+    updateAuthFeedback("Enter email and password");
     return;
   }
 
@@ -749,19 +790,30 @@ const signIn = async () => {
   }
 
   setAuthActionPending(true);
-  const { error } = await supabaseClient.auth.signInWithPassword({
-    email,
-    password
-  });
-  setAuthActionPending(false);
+  updateAuthFeedback("Signing in...");
+  try {
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email,
+      password
+    });
 
-  if (error) {
-    updateSaveIndicator(`Sign in failed: ${error.message}`);
-    return;
+    if (error) {
+      const errorMessage = getErrorMessage(error, "Sign in failed");
+      updateSaveIndicator(`Sign in failed: ${errorMessage}`);
+      updateAuthFeedback(`Sign in failed: ${errorMessage}`);
+      return;
+    }
+
+    await refreshSessionState();
+    updateSaveIndicator("Signed in");
+    updateAuthFeedback("Signed in");
+  } catch (error) {
+    const errorMessage = getErrorMessage(error, "Sign in failed");
+    updateSaveIndicator(`Sign in failed: ${errorMessage}`);
+    updateAuthFeedback(`Sign in failed: ${errorMessage}`);
+  } finally {
+    setAuthActionPending(false);
   }
-
-  await refreshSessionState();
-  updateSaveIndicator("Signed in");
 };
 
 const signOut = async () => {
@@ -777,15 +829,26 @@ const signOut = async () => {
   }
 
   setAuthActionPending(true);
-  const { error } = await supabaseClient.auth.signOut();
-  setAuthActionPending(false);
+  updateAuthFeedback("Signing out...");
+  try {
+    const { error } = await supabaseClient.auth.signOut();
 
-  if (error) {
-    updateSaveIndicator(`Sign out failed: ${error.message}`);
-    return;
+    if (error) {
+      const errorMessage = getErrorMessage(error, "Sign out failed");
+      updateSaveIndicator(`Sign out failed: ${errorMessage}`);
+      updateAuthFeedback(`Sign out failed: ${errorMessage}`);
+      return;
+    }
+
+    await refreshSessionState("Signed out");
+    updateAuthFeedback("Signed out");
+  } catch (error) {
+    const errorMessage = getErrorMessage(error, "Sign out failed");
+    updateSaveIndicator(`Sign out failed: ${errorMessage}`);
+    updateAuthFeedback(`Sign out failed: ${errorMessage}`);
+  } finally {
+    setAuthActionPending(false);
   }
-
-  await refreshSessionState("Signed out");
 };
 
 entryForm.addEventListener("submit", (event) => {
@@ -903,6 +966,7 @@ const initializeApp = async () => {
   setActiveTab("timetable");
   updateReminderToggleLabel();
   updateActiveUserLabel();
+  updateAuthFeedback("Enter email and password to sign in");
   updateAuthButtons();
 
   if (

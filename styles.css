@@ -81,6 +81,11 @@ body {
   color: #4b5563;
 }
 
+#auth-feedback {
+  max-width: 360px;
+  text-align: right;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;
@@ -274,6 +279,10 @@ button:disabled {
 
   .user-switcher input {
     width: 100%;
+  }
+
+  #auth-feedback {
+    text-align: left;
   }
 
   .timetable-actions {
