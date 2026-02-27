@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Study TimeTable</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260227-1" />
   </head>
   <body>
     <main class="app">
@@ -17,20 +17,21 @@
           </p>
         </div>
         <div class="app__status">
-          <label class="user-switcher" for="username-input">
-            Email and password
+          <div class="user-switcher">
             <div class="user-switcher__controls">
               <input
                 id="username-input"
                 type="email"
                 placeholder="Enter email"
                 autocomplete="email"
+                aria-label="Email"
               />
               <input
                 id="password-input"
                 type="password"
                 placeholder="Password"
                 autocomplete="current-password"
+                aria-label="Password"
               />
               <button id="sign-in-button" class="ghost" type="button">
                 Sign in
@@ -39,9 +40,11 @@
                 Sign out
               </button>
             </div>
-          </label>
-          <p id="active-user-label" class="active-user">User: signed out</p>
-          <p id="auth-feedback" class="active-user">Enter email and password to sign in</p>
+          </div>
+          <div class="auth-status-row">
+            <p id="auth-feedback" class="active-user">Enter email and password to sign in</p>
+            <p id="active-user-label" class="active-user">User: signed out</p>
+          </div>
         </div>
       </header>
 
@@ -143,6 +146,6 @@
       window.__SUPABASE_ANON_KEY__ = "sb_publishable_ZrpzUoc_Ur5JcFRPrrxr6g_64s3Zvb4";
     </script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=20260227-1"></script>
   </body>
 </html>

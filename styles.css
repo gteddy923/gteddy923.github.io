@@ -27,7 +27,11 @@ body {
   justify-content: space-between;
   align-items: flex-start;
   gap: 24px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.app__header > :first-child {
+  min-width: 0;
 }
 
 .app__eyebrow {
@@ -49,6 +53,8 @@ body {
   align-items: flex-end;
   gap: 12px;
   font-size: 0.9rem;
+  margin-left: auto;
+  width: min(100%, 340px);
 }
 
 .user-switcher {
@@ -57,22 +63,27 @@ body {
   gap: 8px;
   font-size: 0.85rem;
   color: #374151;
+  width: 100%;
+  text-align: right;
 }
 
 .user-switcher__controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  width: 100%;
 }
 
 .user-switcher input {
-  width: 150px;
+  width: 100%;
   padding: 9px 11px;
   border-radius: 10px;
   border: 1px solid #d1d5db;
   font-size: 0.92rem;
+}
+
+.user-switcher__controls button {
+  width: 100%;
 }
 
 .active-user {
@@ -81,8 +92,19 @@ body {
   color: #4b5563;
 }
 
+.auth-status-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.auth-status-row .active-user {
+  white-space: nowrap;
+}
+
 #auth-feedback {
-  max-width: 360px;
   text-align: right;
 }
 
@@ -268,13 +290,27 @@ button:disabled {
   text-align: center;
 }
 
+@media (max-width: 960px) {
+  .app__header {
+    flex-wrap: wrap;
+  }
+
+  .app__status {
+    width: 100%;
+  }
+}
+
 @media (max-width: 720px) {
   .app__status {
     align-items: flex-start;
   }
 
+  .user-switcher {
+    text-align: left;
+  }
+
   .user-switcher__controls {
-    flex-wrap: wrap;
+    grid-template-columns: 1fr;
   }
 
   .user-switcher input {
@@ -283,6 +319,11 @@ button:disabled {
 
   #auth-feedback {
     text-align: left;
+  }
+
+  .auth-status-row {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .timetable-actions {

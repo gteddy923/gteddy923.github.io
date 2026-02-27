@@ -56,6 +56,24 @@ let supabaseClient = null;
 let activeUser = null;
 let authActionPending = false;
 
+const setText = (element, value) => {
+  if (element) {
+    element.textContent = value;
+  }
+};
+
+const setDisabled = (element, value) => {
+  if (element) {
+    element.disabled = value;
+  }
+};
+
+const addListener = (element, eventName, handler) => {
+  if (element) {
+    element.addEventListener(eventName, handler);
+  }
+};
+
 const normalizeEmail = (value) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
@@ -79,37 +97,34 @@ const getErrorMessage = (error, fallback = "Unexpected error") => {
 };
 
 const updateSaveIndicator = (status) => {
-  saveIndicator.textContent = status;
+  setText(saveIndicator, status);
 };
 
 const updateReminderStatus = (status) => {
-  reminderStatus.textContent = status;
+  setText(reminderStatus, status);
 };
 
 const updateAuthFeedback = (status) => {
-  authFeedback.textContent = status;
+  setText(authFeedback, status);
 };
 
 const updateActiveUserLabel = () => {
   if (!activeUser) {
-    activeUserLabel.textContent = "User: signed out";
+    setText(activeUserLabel, "User: signed out");
     return;
   }
 
-  activeUserLabel.textContent = `User: ${activeUser.email || activeUser.id}`;
+  setText(activeUserLabel, `User: ${activeUser.email || activeUser.id}`);
 };
 
 const updateReminderToggleLabel = () => {
-  reminderToggle.textContent = remindersEnabled
-    ? "Disable reminders"
-    : "Enable reminders";
+  setText(reminderToggle, remindersEnabled ? "Disable reminders" : "Enable reminders");
 };
 
 const updateAuthButtons = () => {
   const authAvailable = Boolean(supabaseClient);
-  signInButton.disabled = !authAvailable || authActionPending;
-  signOutButton.disabled =
-    !authAvailable || authActionPending || !activeUser;
+  setDisabled(signInButton, !authAvailable || authActionPending);
+  setDisabled(signOutButton, !authAvailable || authActionPending || !activeUser);
 };
 
 const setAuthActionPending = (pending) => {
@@ -124,8 +139,13 @@ const setActiveTab = (tabName) => {
     button.setAttribute("aria-selected", String(isActive));
   });
 
-  addPanel.hidden = tabName !== "add";
-  timetablePanel.hidden = tabName !== "timetable";
+  if (addPanel) {
+    addPanel.hidden = tabName !== "add";
+  }
+
+  if (timetablePanel) {
+    timetablePanel.hidden = tabName !== "timetable";
+  }
 };
 
 const toLocalDateKey = (date) => {
@@ -265,7 +285,7 @@ const updateNextReminderLabel = () => {
   const nextEvent = findNextReminderEvent();
 
   if (!nextEvent) {
-    nextReminder.textContent = "No upcoming reminders";
+    setText(nextReminder, "No upcoming reminders");
     return;
   }
 
@@ -275,10 +295,17 @@ const updateNextReminderLabel = () => {
     hour: "numeric",
     minute: "2-digit"
   }).format(nextEvent.when);
-  nextReminder.textContent = `Next: ${eventLabel} ${nextEvent.entry.subject} (${dayAndTime})`;
+  setText(
+    nextReminder,
+    `Next: ${eventLabel} ${nextEvent.entry.subject} (${dayAndTime})`
+  );
 };
 
 const renderEntries = () => {
+  if (!entriesContainer || !emptyState) {
+    return;
+  }
+
   entriesContainer.innerHTML = "";
 
   if (entries.length === 0) {
@@ -433,7 +460,7 @@ const stopActiveReminderAlert = (statusMessage) => {
     activeAlertIntervalId = null;
   }
 
-  stopAlertButton.disabled = true;
+  setDisabled(stopAlertButton, true);
   updateNextReminderLabel();
 
   if (statusMessage) {
@@ -458,7 +485,7 @@ const startActiveReminderAlert = (entry, type) => {
     activeAlertIntervalId = null;
   }
 
-  stopAlertButton.disabled = false;
+  setDisabled(stopAlertButton, false);
   runBeep();
   activeAlertIntervalId = window.setInterval(runBeep, 2_400);
 
@@ -634,7 +661,7 @@ const saveEntries = async () => {
     return false;
   }
 
-  saveButton.disabled = true;
+  setDisabled(saveButton, true);
   updateSaveIndicator("Saving...");
 
   const payload = entries.map((entry) => ({
@@ -694,7 +721,7 @@ const saveEntries = async () => {
     updateSaveIndicator("Save failed");
     return false;
   } finally {
-    saveButton.disabled = false;
+    setDisabled(saveButton, false);
   }
 };
 
@@ -851,7 +878,7 @@ const signOut = async () => {
   }
 };
 
-entryForm.addEventListener("submit", (event) => {
+addListener(entryForm, "submit", (event) => {
   event.preventDefault();
 
   if (!activeUser) {
@@ -885,11 +912,11 @@ entryForm.addEventListener("submit", (event) => {
   entryForm.reset();
 });
 
-saveButton.addEventListener("click", () => {
+addListener(saveButton, "click", () => {
   void saveEntries();
 });
 
-clearButton.addEventListener("click", () => {
+addListener(clearButton, "click", () => {
   if (!activeUser) {
     updateSaveIndicator("Sign in to edit timetable");
     return;
@@ -901,33 +928,33 @@ clearButton.addEventListener("click", () => {
   renderEntries();
 });
 
-signInButton.addEventListener("click", () => {
+addListener(signInButton, "click", () => {
   void signIn();
 });
 
-signOutButton.addEventListener("click", () => {
+addListener(signOutButton, "click", () => {
   void signOut();
 });
 
-usernameInput.addEventListener("keydown", (event) => {
+addListener(usernameInput, "keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     void signIn();
   }
 });
 
-passwordInput.addEventListener("keydown", (event) => {
+addListener(passwordInput, "keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
     void signIn();
   }
 });
 
-stopAlertButton.addEventListener("click", () => {
+addListener(stopAlertButton, "click", () => {
   stopActiveReminderAlert();
 });
 
-reminderToggle.addEventListener("click", async () => {
+addListener(reminderToggle, "click", async () => {
   if (!activeUser) {
     updateSaveIndicator("Sign in to use reminders");
     return;
